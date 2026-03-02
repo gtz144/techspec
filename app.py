@@ -2,11 +2,10 @@ import streamlit as st
 import anthropic
 import base64
 import io
-import re
 from datetime import datetime
 from PIL import Image
 
-# Импорт библиотек для генерации документов (из вашего requirements.txt)
+# Импорт библиотек для документов
 from docx import Document
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
@@ -15,7 +14,7 @@ from reportlab.lib.pagesizes import A4
 # ─── Конфигурация страницы ─────────────────────────────────────────────────────
 st.set_page_config(page_title="ТехСпек Генератор 2.0", layout="wide")
 
-# Список моделей для автоматического перебора (от новых к старым)
+# Список моделей для автоматического перебора
 MODELS_TO_TRY = [
     "claude-3-5-sonnet-latest",
     "claude-3-5-sonnet-20240620",
@@ -42,65 +41,77 @@ def get_pdf_file(text, title):
     doc.build(story)
     return buffer.getvalue()
 
-# ─── Логика взаимодействия с Claude ───────────────────────────────────────────
-
 def call_claude_safe(api_key, content_blocks):
-    """Пробует вызвать Claude, перебирая доступные модели при ошибке 404."""
     client = anthropic.Anthropic(api_key=api_key)
-    last_error = ""
-    
     for model in MODELS_TO_TRY:
         try:
             response = client.messages.create(
                 model=model,
                 max_tokens=4096,
-                system="Ты технический писатель. Пиши строго по существу на русском языке.",
+                system="Ты технический писатель. Пиши на русском языке.",
                 messages=[{"role": "user", "content": content_blocks}]
             )
             return response.content[0].text, model
         except anthropic.NotFoundError:
-            last_error = f"Модель {model} не найдена."
             continue
         except Exception as e:
             return None, str(e)
-            
-    return None, f"Ни одна из моделей не доступна. Последняя ошибка: {last_error}"
+    return None, "Ни одна из моделей не доступна в вашем аккаунте."
 
 # ─── Интерфейс ────────────────────────────────────────────────────────────────
 
-st.markdown("""
-<style>
-    .main-header { background: #1a1a2e; color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; }
-    .stButton>button { background: #4361ee !important; color: white !important; border-radius: 8px; }
-</style>
-<div class="main-header">
-    <h1>⚙️ ТехСпек Генератор: Профессиональный закуп</h1>
-    <p>Автоматический перевод и структурирование данных из фото и PDF</p>
-</div>
-""", unsafe_allow_html=True)
+st.title("⚙️ ТехСпек Генератор")
 
-# Получение ключа из Secrets
-api_key_secret = st.secrets.get("ANTHROPIC_API_KEY", None)
+# Ключ из Secrets
+api_key = st.secrets.get("ANTHROPIC_API_KEY", None)
 
-if not api_key_secret:
-    api_key_input = st.sidebar.text_input("Введите Anthropic API Key", type="password")
-    current_key = api_key_input
-else:
-    current_key = api_key_secret
-    st.sidebar.success("Ключ загружен из настроек Streamlit")
+if not api_key:
+    api_key = st.sidebar.text_input("Введите Anthropic API Key", type="password")
 
 col_input, col_output = st.columns([1, 1.5], gap="large")
 
 with col_input:
     st.subheader("📂 Исходные данные")
-    uploaded_files = st.file_uploader("Загрузите файлы (PDF, JPG, PNG)", type=["pdf", "jpg", "png", "jpeg"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader("Загрузите файлы", type=["pdf", "jpg", "png", "jpeg"], accept_multiple_files=True)
+    equipment = st.text_input("Наименование оборудования")
     
-    equipment = st.text_input("Что за оборудование?", placeholder="Например: Ступица для грузовика")
-    
-    if st.button("🚀 Начать анализ", use_container_width=True):
-        if not current_key:
+    # Кнопка запуска
+    start_analysis = st.button("🚀 Начать анализ", use_container_width=True)
+
+with col_output:
+    if start_analysis:
+        if not api_key:
             st.error("Ключ API не найден!")
         elif not uploaded_files:
             st.warning("Загрузите хотя бы один файл.")
         else:
-            st.
+            try:
+                with st.spinner("Claude анализирует данные..."):
+                    blocks = []
+                    for f in uploaded_files:
+                        f_bytes = f.getvalue()
+                        if f.name.lower().endswith(('.jpg', '.jpeg', '.png')):
+                            encoded = base64.b64encode(f_bytes).decode('utf-8')
+                            blocks.append({
+                                "type": "image",
+                                "source": {"type": "base64", "media_type": "image/jpeg", "data": encoded}
+                            })
+                    
+                    blocks.append({
+                        "type": "text", 
+                        "text": f"Составь подробную спецификацию для: {equipment}. На русском языке."
+                    })
+                    
+                    result_text, used_model = call_claude_safe(api_key, blocks)
+                    
+                    if result_text:
+                        st.success(f"Использована модель: {used_model}")
+                        st.markdown(result_text)
+                        
+                        st.divider()
+                        st.download_button("⬇️ Скачать Word", get_docx_file(result_text, equipment), f"{equipment}.docx")
+                        st.download_button("⬇️ Скачать PDF", get_pdf_file(result_text, equipment), f"{equipment}.pdf")
+                    else:
+                        st.error(used_model)
+            except Exception as e:
+                st.error(f"Сбой: {e}")
