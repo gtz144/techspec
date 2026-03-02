@@ -259,17 +259,10 @@ if not api_key:
 SUPPORTED_TYPES = ["pdf", "png", "jpg", "jpeg", "webp", "tiff", "tif", "bmp"]
 MAX_PDF_PAGES   = 90
 
-# Алгоритм автоматического подбора модели (начиная с самых современных)
-MODELS_TO_TRY = [
-    "claude-3-5-sonnet-20241022",
-    "claude-3-5-sonnet-latest",
-    "claude-3-opus-20240229",
-    "claude-3-sonnet-20240229"
-]
 
-# Цена на 1000 токенов ($ per 1K) актуализирована под Claude 3.5 Sonnet
-PRICE_INPUT_PER_1K  = 0.003   # $3 / 1M input
-PRICE_OUTPUT_PER_1K = 0.015   # $15 / 1M output
+# Цена claude-opus-4-5 на 1000 токенов ($ per 1K)
+PRICE_INPUT_PER_1K  = 0.015   # $15 / 1M input
+PRICE_OUTPUT_PER_1K = 0.075   # $75 / 1M output
 
 DEFAULT_SYSTEM_PROMPT = """Ты — эксперт-технолог по технической документации для отдела закупа.
 
@@ -389,33 +382,24 @@ def build_prompt(equipment_type, doc_source_hint, detail_level, filenames, chunk
 def call_claude(api_key, content_blocks, prompt_text, system_prompt=None, token_tracker=None):
     client  = anthropic.Anthropic(api_key=api_key)
     content = content_blocks + [{"type": "text", "text": prompt_text}]
-    
-    for model_name in MODELS_TO_TRY:
-        kwargs  = dict(
-            model      = model_name,
-            max_tokens = 4096,
-            messages   = [{"role": "user", "content": content}]
-        )
-        if system_prompt and system_prompt.strip():
-            kwargs["system"] = system_prompt.strip()
+    kwargs  = dict(
+        model    = "claude-opus-4-5",
+        max_tokens = 4096,
+        messages = [{"role": "user", "content": content}]
+    )
+    if system_prompt and system_prompt.strip():
+        kwargs["system"] = system_prompt.strip()
 
-        try:
-            resp = client.messages.create(**kwargs)
+    resp = client.messages.create(**kwargs)
 
-            # Track token usage
-            if token_tracker is not None:
-                usage = resp.usage
-                token_tracker["input"]  = token_tracker.get("input", 0)  + usage.input_tokens
-                token_tracker["output"] = token_tracker.get("output", 0) + usage.output_tokens
-                token_tracker["calls"]  = token_tracker.get("calls", 0)  + 1
+    # Track token usage
+    if token_tracker is not None:
+        usage = resp.usage
+        token_tracker["input"]  = token_tracker.get("input", 0)  + usage.input_tokens
+        token_tracker["output"] = token_tracker.get("output", 0) + usage.output_tokens
+        token_tracker["calls"]  = token_tracker.get("calls", 0)  + 1
 
-            return resp.content[0].text
-        except anthropic.NotFoundError:
-            continue
-        except Exception as e:
-            raise e
-            
-    raise Exception("Ни одна из моделей Claude не найдена или недоступна в вашем аккаунте.")
+    return resp.content[0].text
 
 
 def generate_spec(api_key, uploaded_files, equipment_type, doc_source_hint,
@@ -468,22 +452,11 @@ def generate_spec(api_key, uploaded_files, equipment_type, doc_source_hint,
         + "\n---\n".join(partials)
         + "\n\nВерни ТОЛЬКО итоговую спецификацию, без пояснений."
     )
-    
     client = anthropic.Anthropic(api_key=api_key)
-    resp = None
-    for model_name in MODELS_TO_TRY:
-        try:
-            resp = client.messages.create(
-                model=model_name, max_tokens=4096,
-                messages=[{"role":"user","content":merge_prompt}]
-            )
-            break
-        except anthropic.NotFoundError:
-            continue
-            
-    if resp is None:
-        raise Exception("Ни одна из моделей Claude не доступна для объединения фрагментов.")
-        
+    resp   = client.messages.create(
+        model="claude-opus-4-5", max_tokens=4096,
+        messages=[{"role":"user","content":merge_prompt}]
+    )
     if token_tracker is not None:
         token_tracker["input"]  = token_tracker.get("input", 0)  + resp.usage.input_tokens
         token_tracker["output"] = token_tracker.get("output", 0) + resp.usage.output_tokens
@@ -708,7 +681,7 @@ with col_left:
             st.session_state["system_prompt_input"] = DEFAULT_SYSTEM_PROMPT
             st.rerun()
     with col_tokens:
-        st.markdown('<div style="font-size:0.78rem;color:#6b7280;padding:8px 0;">Модель: <b>Автовыбор (Claude 3.5)</b><br>Лимит: <b>200 000 токенов</b></div>', unsafe_allow_html=True)
+        st.markdown('<div style="font-size:0.78rem;color:#6b7280;padding:8px 0;">Модель: <b>claude-opus-4-5</b><br>Лимит: <b>200 000 токенов</b></div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     can_go = bool(uploaded_files and api_key)
