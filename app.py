@@ -1,5 +1,12 @@
 import streamlit as st
-import anthropic
+from anthropic import Anthropic
+
+# Streamlit сам найдет ключ в Secrets по этому имени
+client = Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+
+# Пример вызова модели
+# message = client.messages.create( ... )
+
 import base64
 import re
 import io
